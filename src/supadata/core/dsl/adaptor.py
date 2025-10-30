@@ -260,40 +260,51 @@ class SaveAdaptor(DslAdaptor):
                 option[self.clean_str(_type.expression().identifier().getText())] = self.clean_str(
                     _type.expression().STRING().getText())
 
-        # 构建 COPY 命令的选项
-        copy_options = [f"FORMAT {format_type.upper()}"]
-        if mode:
-            mode_map = {
-                "overwrite": "OVERWRITE",
-                "append": "APPEND",
-                "errorIfExists": "",  # DuckDB 默认行为
-                "ignore": ""  # DuckDB 默认行为
-            }
-            if mode_map.get(mode):
-                if format_type.upper() == 'JSON':  # json 不支持OVERWRITE
-                    pass
-                else:
-                    copy_options.append(mode_map[mode])
+        conn = self.xql_listener.get_connection()
+        if format_type == "console":
+            max_rows = option.get('max_rows', 20)
+            max_columns = option.get('max_columns', 10)
+            sql_to_execute = f"SELECT * FROM {table_name} LIMIT {max_rows};"
+            df: pd.DataFrame = conn.execute(sql_to_execute).fetchdf()
+            # 打印表格
+            pd.set_option('display.max_rows', int(max_rows))
+            pd.set_option('display.max_columns', int(max_columns))
+            pd.set_option('display.width', None)
+            print(df.to_string(index=False))
+        else:
+            # 构建 COPY 命令的选项
+            copy_options = [f"FORMAT {format_type.upper()}"]
+            if mode:
+                mode_map = {
+                    "overwrite": "OVERWRITE",
+                    "append": "APPEND",
+                    "errorIfExists": "",  # DuckDB 默认行为
+                    "ignore": ""  # DuckDB 默认行为
+                }
+                if mode_map.get(mode):
+                    if format_type.upper() == 'JSON':  # json 不支持OVERWRITE
+                        pass
+                    else:
+                        copy_options.append(mode_map[mode])
 
-        if partition_by_col:
-            copy_options.append(f"PARTITION_BY ({','.join(partition_by_col)})")
+            if partition_by_col:
+                copy_options.append(f"PARTITION_BY ({','.join(partition_by_col)})")
 
-        # 将 option 字典转换为 COPY 选项, 例如: {"compression": "gzip"} -> ", COMPRESSION 'gzip'"
-        if option:
-            for key, value in option.items():
-                copy_options.append(f"{key.upper()} '{value}'")
+            # 将 option 字典转换为 COPY 选项, 例如: {"compression": "gzip"} -> ", COMPRESSION 'gzip'"
+            if option:
+                for key, value in option.items():
+                    copy_options.append(f"{key.upper()} '{value}'")
 
-        options_str = ""
-        if copy_options:
-            options_str = f" ({', '.join(copy_options)})"
+            options_str = ""
+            if copy_options:
+                options_str = f" ({', '.join(copy_options)})"
 
-        sql_to_execute = f"COPY {table_name} TO '{final_path}'{options_str}"
-        print(sql_to_execute)
-        try:
-            conn = self.xql_listener.get_connection()
-            conn.execute(sql_to_execute)
-        except duckdb.OperationalError as e:
-            raise Exception(f"Error executing SAVE: {e}")
+            sql_to_execute = f"COPY {table_name} TO '{final_path}'{options_str}"
+            print(sql_to_execute)
+            try:
+                conn.execute(sql_to_execute)
+            except duckdb.OperationalError as e:
+                raise Exception(f"Error executing SAVE: {e}")
 
 
 class SelectAdaptor(DslAdaptor):
@@ -427,6 +438,12 @@ class XQLExecListener(DSLSQLListener):
         self.AdaptorDict.get(ctx.getChild(0).getText().lower()).parse(ctx)
 
 
+def run_xql(sql: str):
+    lister = XQLExecListener()
+    p = XQLExec()
+    p.parse_xql(sql, lister)
+
+
 def main():
     xql_json_script = """
     load json.`/Users/mydata.json` as raw_json_logs;
@@ -453,7 +470,7 @@ def main():
     """
 
     xql_http_json_api = """
-    load http.`https://api.github.com/repos/duckdb/duckdb/releases` as raw_http_json;
+    load http.`https://api.github.com/repos/duckdb/duckdb/releases` as raw_http_json; 
     select * from raw_http_json limit 10 as tmp;
     save overwrite tmp as json.`/Users/moofs/Code/my-data-warehouse/my_http_json.json`;
     """
@@ -469,9 +486,13 @@ def main():
     select * from raw_parquet_file limit 10 as tmp;
     save overwrite tmp as csv.`/Users/moofs/Code/my-data-warehouse/my_parquet_file.csv`;
     """
-    my_lister = XQLExecListener()
-    p = XQLExec()
-    p.parse_xql(xql_parquet_script, my_lister)
+
+    xql_show_script = """
+    load http.`https://raw.githubusercontent.com/duckdb/duckdb/main/data/csv/16857.csv` as raw_http_file;
+    select * from raw_http_file limit 10 as tmp;
+    save overwrite tmp as console.``;
+    """
+    run_xql(xql_show_script)
 
 
 if __name__ == '__main__':
